@@ -1,15 +1,31 @@
+// app/[locale]/login/page.tsx
+"use client"; // El formulario ahora necesita ser un Client Component
+
 import { useTranslations } from "next-intl";
+import { useActionState } from "react";
 import { login } from "@/app/actions";
+import { Loader2 } from "lucide-react"; // Para el indicador de carga
+
+// Definimos el tipo del estado que la acción puede devolver
+type LoginState = {
+  error?: string;
+};
 
 /**
- * @description Formulario de inicio de sesión. Utiliza una Server Action para manejar el envío.
+ * @description Formulario de inicio de sesión que usa `useActionState` para manejar el estado.
  */
 function LoginForm() {
   const t = useTranslations("LoginPage");
 
+  // Hook para manejar el estado de la Server Action
+  const [state, formAction, isPending] = useActionState<LoginState, FormData>(
+    login,
+    {} // Estado inicial vacío
+  );
+
   return (
     <form
-      action={login}
+      action={formAction} // Usamos la acción que nos da el hook
       className="flex flex-col gap-4 p-8 bg-white shadow-md rounded-lg"
     >
       <h2 className="text-2xl font-bold text-center">{t("title")}</h2>
@@ -47,11 +63,25 @@ function LoginForm() {
           defaultValue="password123"
         />
       </div>
+
+      {/* Mostramos el mensaje de error si existe en el estado */}
+      {state?.error && (
+        <p className="text-sm text-red-500 text-center">{state.error}</p>
+      )}
+
       <button
         type="submit"
-        className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+        disabled={isPending} // Deshabilitamos el botón mientras se procesa
+        className="w-full flex items-center justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400"
       >
-        {t("signInButton")}
+        {isPending ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Iniciando...
+          </>
+        ) : (
+          t("signInButton")
+        )}
       </button>
     </form>
   );

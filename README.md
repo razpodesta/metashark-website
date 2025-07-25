@@ -1,90 +1,153 @@
-# Next.js Multi-Tenant Example
+# Metashark - Plataforma SaaS Multi-Tenant 🦈
 
-A production-ready example of a multi-tenant application built with Next.js 15, featuring custom subdomains for each tenant.
+Metashark es una plataforma como servicio (SaaS) robusta y escalable construida con Next.js 15 y el App Router. Permite a los usuarios crear sus propios subdominios personalizados, cada uno representado por un emoji único, demostrando una arquitectura multi-tenant moderna y eficiente.
 
-## Features
+---
 
-- ✅ Custom subdomain routing with Next.js middleware
-- ✅ Tenant-specific content and pages
-- ✅ Shared components and layouts across tenants
-- ✅ Redis for tenant data storage
-- ✅ Admin interface for managing tenants
-- ✅ Emoji support for tenant branding
-- ✅ Support for local development with subdomains
-- ✅ Compatible with Vercel preview deployments
+### Tabla de Contenidos
 
-## Tech Stack
+1.  [**¿Qué es Metashark?**](#qué-es-metashark)
+2.  [**Características Principales**](#características-principales)
+3.  [**Tech Stack**](#tech-stack)
+4.  [**Arquitectura y Funcionamiento**](#arquitectura-y-funcionamiento)
+    - Flujo de una Petición
+    - Middleware: El Cerebro del Enrutamiento
+    - Autenticación con Auth.js (v5)
+    - Internacionalización (i18n)
+    - Gestión de Subdominios
+5.  [**Potencial y Próximos Pasos**](#potencial-y-próximos-pasos)
+6.  [**Guía de Inicio Rápido**](#guía-de-inicio-rápido)
 
-- [Next.js 15](https://nextjs.org/) with App Router
-- [React 19](https://react.dev/)
-- [Upstash Redis](https://upstash.com/) for data storage
-- [Tailwind 4](https://tailwindcss.com/) for styling
-- [shadcn/ui](https://ui.shadcn.com/) for the design system
+---
 
-## Getting Started
+### ¿Qué es Metashark?
 
-### Prerequisites
+Metashark es un proyecto base (boilerplate) que sirve como ejemplo de producción para una aplicación multi-tenant. La funcionalidad principal permite a los usuarios registrar un subdominio (ej. `mi-sitio.localhost:3000`) y asociarle un emoji. Este subdominio muestra una página de bienvenida personalizada.
 
-- Node.js 18.17.0 or later
-- pnpm (recommended) or npm/yarn
-- Upstash Redis account (for production)
+El dominio principal sirve como la página de aterrizaje para crear nuevos subdominios y como el portal de administración para gestionarlos.
 
-### Installation
+### Características Principales
 
-1. Clone the repository:
+- ✅ **Enrutamiento por Subdominio:** Cada tenant obtiene su propia URL personalizada.
+- ✅ **Internacionalización (i18n):** Soporte para múltiples idiomas (`en`, `es`) en el dominio principal con enrutamiento localizado.
+- ✅ **Autenticación Segura:** Panel de administración protegido con `next-auth` (Auth.js v5), compatible con el Edge Runtime.
+- ✅ **Persistencia de Datos:** Uso de **Upstash Redis** como base de datos en memoria para una gestión de subdominios ultrarrápida.
+- ✅ **Server Actions:** Lógica de backend moderna y segura para la creación y eliminación de subdominios.
+- ✅ **Stack Tecnológico Moderno:** Construido con Next.js 15 (App Router), React 19 y TailwindCSS 4.
 
-   ```bash
-   git clone https://github.com/vercel/platforms.git
-   cd platforms
-   ```
+### Tech Stack
 
-2. Install dependencies:
+| Componente               | Tecnología                                                                                                     |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| **Framework**            | [Next.js 15](https://nextjs.org/) (App Router, Server Components)                                              |
+| **UI**                   | [React 19](https://react.dev/), [TailwindCSS 4](https://tailwindcss.com/), [Shadcn/UI](https://ui.shadcn.com/) |
+| **Autenticación**        | [Auth.js v5](https://authjs.dev/) (anteriormente NextAuth)                                                     |
+| **Internacionalización** | [next-intl](https://next-intl.dev/)                                                                            |
+| **Base de Datos**        | [Upstash Redis](https://upstash.com/redis)                                                                     |
+| **Validación**           | [Zod](https://zod.dev/)                                                                                        |
 
-   ```bash
-   pnpm install
-   ```
+---
 
-3. Set up environment variables:
-   Create a `.env.local` file in the root directory with:
+### Arquitectura y Funcionamiento
 
-   ```
-   KV_REST_API_URL=your_redis_url
-   KV_REST_API_TOKEN=your_redis_token
-   ```
+La clave de Metashark reside en su `middleware.ts`, que actúa como un controlador de tráfico inteligente para cada petición entrante.
 
-4. Start the development server:
+#### Flujo de una Petición
 
-   ```bash
-   pnpm dev
-   ```
+```mermaid
+graph TD
+    A[Petición Entrante] --> B{¿Es un Subdominio?};
+    B -->|Sí| C[Middleware reescribe a /s/[subdomain]];
+    B -->|No (Dominio Principal)| D{Middleware ejecuta Auth.js};
+    D -->|Usuario NO Autorizado| E[Auth.js redirige a /login];
+    D -->|Usuario AUTORIZADO| F[Auth.js pasa el control a next-intl];
+    F --> G[next-intl gestiona el prefijo de idioma];
+    C --> H[Renderiza app/s/[subdomain]/page.tsx];
+    G --> I[Renderiza la página solicitada, ej: app/[locale]/admin/page.tsx];
+```
 
-5. Access the application:
-   - Main site: http://localhost:3000
-   - Admin panel: http://localhost:3000/admin
-   - Tenants: http://[tenant-name].localhost:3000
+#### 1. Middleware: El Cerebro del Enrutamiento
 
-## Multi-Tenant Architecture
+El archivo `middleware.ts` tiene una lógica secuencial clara:
 
-This application demonstrates a subdomain-based multi-tenant architecture where:
+1.  **Detección de Subdominio:** Es lo primero que se comprueba. Si el `host` de la petición corresponde a un subdominio, el middleware reescribe la URL internamente a la ruta `/s/[subdomain]` y detiene su ejecución. Esto aísla completamente la lógica de los tenants.
+2.  **Autenticación (`auth`):** Si no es un subdominio, la petición es envuelta por el middleware de `auth`. Este ejecuta el callback `authorized` de `auth.config.ts` para proteger las rutas privadas (ej. `/admin`).
+3.  **Internacionalización (`intlMiddleware`):** Si la autenticación es exitosa (o no requerida), el control pasa al middleware de `next-intl`, que se encarga de gestionar los prefijos de idioma (`/es`, `/en`) según la configuración en `navigation.ts`.
 
-- Each tenant gets their own subdomain (`tenant.yourdomain.com`)
-- The middleware handles routing requests to the correct tenant
-- Tenant data is stored in Redis using a `subdomain:{name}` key pattern
-- The main domain hosts the landing page and admin interface
-- Subdomains are dynamically mapped to tenant-specific content
+#### 2. Autenticación con Auth.js (v5)
 
-The middleware (`middleware.ts`) intelligently detects subdomains across various environments (local development, production, and Vercel preview deployments).
+- **`auth.ts`**: Contiene la configuración principal de Auth.js, incluyendo los "providers" (en este caso, `Credentials` para login con email/contraseña). Utiliza **`bcryptjs`** para la comparación de contraseñas, asegurando la compatibilidad con el Edge Runtime.
+- **`auth.config.ts`**: Define las reglas de autorización en el callback `authorized`, especificando qué rutas son privadas.
+- **`/api/auth/[...nextauth]/route.ts`**: Expone los endpoints de API (`/api/auth/session`, `/api/auth/signin`, etc.) que `SessionProvider` y otras utilidades de Auth.js necesitan para funcionar en el cliente.
 
-## Deployment
+#### 3. Internacionalización (i18n) con `next-intl`
 
-This application is designed to be deployed on Vercel. To deploy:
+- **`navigation.ts`**: Centraliza la configuración de rutas i18n. Define los `locales`, la estrategia `localePrefix`, y exporta componentes como `Link` y `redirect` que ya son conscientes de los idiomas.
+- **`i18n.ts`**: Configura la carga de los archivos de mensajes (ej. `messages/es.json`) para el `locale` de la petición actual.
+- **`app/[locale]/...`**: La estructura de carpetas que alberga todas las páginas internacionalizadas del dominio principal.
 
-1. Push your repository to GitHub
-2. Connect your repository to Vercel
-3. Configure environment variables
-4. Deploy
+#### 4. Gestión de Subdominios (Multi-Tenancy)
 
-For custom domains, make sure to:
+- **Base de Datos (Redis):** Se utiliza Upstash Redis por su altísima velocidad. Cada subdominio se guarda como una clave-valor simple (ej. `subdomain:test` -> `{emoji: '🚀', ...}`).
+- **Ruta Dinámica:** La ruta `app/s/[subdomain]/page.tsx` es un Server Component que recibe el nombre del subdominio, consulta Redis para obtener sus datos (el emoji) y renderiza la página personalizada. Si no encuentra el subdominio, muestra una página de error 404.
 
-1. Add your root domain to Vercel
-2. Set up a wildcard DNS record (`*.yourdomain.com`) on Vercel
+---
+
+### Potencial y Próximos Pasos
+
+Esta base de código está lista para ser extendida con funcionalidades más complejas:
+
+- **Roles de Usuario:** Extender el callback `jwt` y `session` en `auth.config.ts` para añadir roles al objeto de sesión y proteger rutas de forma más granular (ej. rutas de super-admin).
+- **Bases de Datos Relacionales:** Reemplazar `MOCK_USERS` y la lógica de subdominios con una base de datos como PostgreSQL o MySQL para una gestión de datos más robusta.
+- **Planes de Suscripción:** Integrar un sistema de pagos como Stripe para ofrecer diferentes niveles de servicio a los tenants.
+- **Personalización del Tenant:** Permitir a los usuarios no solo elegir un emoji, sino también personalizar colores, subir un logo o añadir contenido propio a su página de subdominio.
+- **UX Mejorada:** Implementar las mejoras sugeridas en el código, como notificaciones "toast" para las acciones y modales de confirmación para operaciones destructivas.
+
+---
+
+### Guía de Inicio Rápido
+
+Sigue estos pasos para ejecutar el proyecto localmente:
+
+1.  **Clonar el repositorio:**
+
+    ```bash
+    git clone https://tu-repositorio.git
+    cd metashark-website
+    ```
+
+2.  **Instalar dependencias:**
+
+    ```bash
+    pnpm install
+    ```
+
+3.  **Configurar Variables de Entorno:**
+    Crea un archivo `.env.local` en la raíz del proyecto y añade las siguientes variables:
+
+    ```env
+    # Credenciales de Upstash Redis
+    KV_REST_API_URL="TU_URL_DE_UPSTASH_REDIS"
+    KV_REST_API_TOKEN="TU_TOKEN_DE_UPSTASH_REDIS"
+
+    # Secreto para NextAuth/Auth.js (Genera uno nuevo para producción)
+    AUTH_SECRET="un_secreto_de_prueba_muy_seguro_para_desarrollo_local"
+    ```
+
+4.  **Iniciar el servidor de desarrollo:**
+    Se recomienda usar el script con Webpack para mayor estabilidad.
+
+    ```bash
+    pnpm run dev:webpack
+    ```
+
+    O si prefieres usar Turbopack:
+
+    ```bash
+    pnpm run dev
+    ```
+
+5.  **Acceder a la aplicación:**
+    - **Página Principal:** `http://localhost:3000`
+    - **Panel de Admin:** `http://localhost:3000/admin` (Credenciales: `admin@metashark.co` / `password123`)
+    - **Subdominios:** Después de crear uno (ej. "test"), accede a `http://test.localhost:3000`.

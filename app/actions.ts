@@ -1,20 +1,22 @@
 "use server";
 
+// --- IMPORTACIONES DE TERCEROS Y DE NEXT.JS ---
 import { signIn, signOut } from "@/auth";
-import { redis } from "@/lib/redis";
-import { protocol, rootDomain } from "@/lib/utils";
 import { AuthError } from "next-auth";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-// Esquema de validación para el formulario de login
+// --- IMPORTACIONES INTERNAS DEL PROYECTO ---
+import { redis } from "@/lib/redis";
+import { protocol, rootDomain } from "@/lib/utils";
+
+// --- ESQUEMAS DE VALIDACIÓN CON ZOD ---
 const LoginSchema = z.object({
   email: z.string().email({ message: "Por favor, introduce un email válido." }),
   password: z.string().min(1, { message: "La contraseña es requerida." }),
 });
 
-// Esquema de validación para la creación de subdominios
 const SubdomainSchema = z.object({
   subdomain: z
     .string()
@@ -25,45 +27,55 @@ const SubdomainSchema = z.object({
   icon: z.string().min(1, { message: "El ícono es requerido." }),
 });
 
+// --- SERVER ACTIONS ---
+
 /**
  * @description Maneja el inicio de sesión del usuario.
+ * Esta acción tiene una firma que es compatible con el hook `useActionState`.
+ * @param prevState - El estado anterior (inyectado por `useActionState`).
+ * @param formData - Los datos del formulario.
+ * @returns Un objeto que coincide con el tipo `LoginState` definido en el componente.
  */
-export async function login(formData: FormData) {
+export async function login(
+  prevState: any,
+  formData: FormData
+): Promise<{ error?: string }> {
+  const validatedFields = LoginSchema.safeParse(
+    Object.fromEntries(formData.entries())
+  );
+
+  if (!validatedFields.success) {
+    console.warn(
+      "[Action:login] Validación de formulario fallida:",
+      validatedFields.error.flatten().fieldErrors
+    );
+    return { error: "Los campos proporcionados son inválidos." };
+  }
+
+  const { email, password } = validatedFields.data;
+
   try {
-    const validatedFields = LoginSchema.safeParse(
-      Object.fromEntries(formData.entries())
-    );
+    console.log(`[Action:login] Intentando iniciar sesión para: ${email}`);
+    await signIn("credentials", { email, password, redirectTo: "/admin" });
 
-    if (!validatedFields.success) {
-      console.warn(
-        "[Action:login] Validación fallida:",
-        validatedFields.error.flatten().fieldErrors
-      );
-      // En una implementación real con `useActionState`, devolverías un objeto de error aquí.
-      // Por ahora, el error se maneja en el bloque catch de AuthError.
-      return;
-    }
-
-    console.log(
-      `[Action:login] Intentando iniciar sesión para el usuario: ${validatedFields.data.email}`
-    );
-    await signIn("credentials", formData);
-    console.log(
-      `[Action:login] Inicio de sesión exitoso para: ${validatedFields.data.email}`
-    );
+    // Aunque `signIn` redirige y este código podría no alcanzarse,
+    // es necesario para satisfacer el contrato de tipos de la función
+    // y asegurar que siempre se devuelve un estado válido.
+    return {};
   } catch (error) {
     if (error instanceof AuthError) {
       console.error(
         `[Action:login] Fallo de autenticación. Tipo: ${error.type}`
       );
-      // Aquí puedes mapear `error.type` a mensajes amigables para el usuario.
-      // Por ejemplo, "CredentialsSignin" significa credenciales incorrectas.
-      return; // Retorna para que la página de login pueda mostrar un error.
+      switch (error.type) {
+        case "CredentialsSignin":
+          return { error: "Las credenciales proporcionadas son incorrectas." };
+        default:
+          return { error: "Algo salió mal durante el inicio de sesión." };
+      }
     }
-    console.error(
-      `[Action:login] Ocurrió un error inesperado durante el login:`,
-      error
-    );
+
+    // Si el error no es de Auth.js, es un error inesperado, y debemos relanzarlo.
     throw error;
   }
 }
@@ -82,7 +94,7 @@ export async function logout() {
 }
 
 /**
- * @description Crea un nuevo subdominio.
+ * @description Crea un nuevo subdominio y lo guarda en Redis.
  */
 export async function createSubdomainAction(
   prevState: any,
@@ -101,7 +113,7 @@ export async function createSubdomainAction(
       error: Object.values(validatedFields.error.flatten().fieldErrors).join(
         ", "
       ),
-      ...Object.fromEntries(formData.entries()), // Devuelve los valores para repoblar el formulario
+      ...Object.fromEntries(formData.entries()),
     };
   }
 
@@ -113,7 +125,7 @@ export async function createSubdomainAction(
   const subdomainAlreadyExists = await redis.get(`subdomain:${subdomain}`);
   if (subdomainAlreadyExists) {
     console.warn(
-      `[Action:createSubdomain] Intento fallido: El subdominio '${subdomain}' ya existe.`
+      `[Action:createSubdomain] El subdominio '${subdomain}' ya existe.`
     );
     return {
       error: "Este subdominio ya está en uso.",
@@ -129,12 +141,14 @@ export async function createSubdomainAction(
   console.log(
     `[Action:createSubdomain] Subdominio '${subdomain}' creado exitosamente.`
   );
-  revalidatePath("/[locale]/admin", "page"); // Invalida el caché de la página de admin
+
+  revalidatePath("/[locale]/admin", "page");
+
   redirect(`${protocol}://${subdomain}.${rootDomain}`);
 }
 
 /**
- * @description Elimina un subdominio existente.
+ * @description Elimina un subdominio existente de Redis.
  */
 export async function deleteSubdomainAction(
   prevState: any,
@@ -146,28 +160,21 @@ export async function deleteSubdomainAction(
   );
 
   if (typeof subdomain !== "string" || !subdomain) {
-    console.error(
-      "[Action:deleteSubdomain] Intento de eliminación fallido: No se proporcionó un subdominio válido."
-    );
+    console.error("[Action:deleteSubdomain] Subdominio inválido.");
     return { error: "Subdominio inválido." };
   }
 
   try {
-    const result = await redis.del(`subdomain:${subdomain}`);
-    if (result > 0) {
-      console.log(
-        `[Action:deleteSubdomain] Subdominio '${subdomain}' eliminado exitosamente de Redis.`
-      );
-    } else {
-      console.warn(
-        `[Action:deleteSubdomain] El subdominio '${subdomain}' no fue encontrado en Redis para eliminar.`
-      );
-    }
+    await redis.del(`subdomain:${subdomain}`);
+    console.log(
+      `[Action:deleteSubdomain] Subdominio '${subdomain}' eliminado.`
+    );
+
     revalidatePath("/[locale]/admin", "page");
     return { success: "Subdominio eliminado correctamente." };
   } catch (error) {
     console.error(
-      `[Action:deleteSubdomain] Error al eliminar el subdominio '${subdomain}':`,
+      `[Action:deleteSubdomain] Error al eliminar '${subdomain}':`,
       error
     );
     return { error: "Error al eliminar el subdominio." };

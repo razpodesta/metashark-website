@@ -1,6 +1,6 @@
 // middleware.ts
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "./auth"; // Importa el objeto `auth` de Auth.js v5
+import { auth } from "./auth";
 import createIntlMiddleware from "next-intl/middleware";
 import { locales, pathnames, localePrefix } from "./navigation";
 
@@ -11,6 +11,8 @@ const intlMiddleware = createIntlMiddleware({
   defaultLocale: "en",
 });
 
+// `auth` es ahora nuestro middleware principal.
+// Se encarga de la protección de rutas.
 export default auth((request) => {
   // 1. Detección de Subdominio
   const host = request.headers.get("host") || "";
@@ -26,7 +28,7 @@ export default auth((request) => {
 
   if (isSubdomain) {
     const subdomain = host.split(".")[0];
-    const url = request.nextUrl; // No es necesario clonar aquí
+    const url = request.nextUrl;
     console.log(
       `[Middleware] Subdominio detectado: '${subdomain}'. Reescribiendo a /s/${subdomain}${url.pathname}`
     );
@@ -35,26 +37,18 @@ export default auth((request) => {
     );
   }
 
-  // 2. Si no es un subdominio, pasa la petición al middleware de i18n.
-  // La lógica de `authorized` en `auth.config.ts` ya se ejecutó por
-  // el `auth` que envuelve esta función. Si llegamos aquí, el usuario
-  // está autorizado para esta ruta.
-  console.log(
-    `[Middleware] Dominio principal y ruta autorizada. Ejecutando i18n middleware.`
-  );
+  // 2. Si no es un subdominio, y si la autorización fue exitosa (gestionada por `auth`),
+  // entonces procedemos con la internacionalización.
+  console.log(`[Middleware] Dominio principal. Ejecutando i18n middleware.`);
   return intlMiddleware(request);
 });
 
 // Configuración del Matcher
 export const config = {
-  // El matcher ahora incluye explícitamente las rutas de la aplicación
-  // y excluye las que no necesitan procesamiento.
-  matcher: [
-    // Habilita el middleware para todas las rutas excepto las siguientes:
-    "/((?!api|_next/static|_next/image|assets|favicon.ico).*)",
-    // La ruta de la API de autenticación necesita ser manejada
-    "/api/auth/:path*",
-  ],
+  // El matcher le dice a Next.js en qué rutas debe ejecutarse este middleware.
+  // Usamos un lookahead negativo para excluir solo los assets estáticos y de imagen.
+  // ¡IMPORTANTE! Hemos eliminado la exclusión de `/api`.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
 /* MEJORAS PROPUESTAS
  * 1. **Roles en Middleware:** Dentro de `authMiddleware`, una vez que `req.auth` contenga roles, se puede añadir lógica como: `if (pathnameWithoutLocale.startsWith('/admin') && req.auth.user.role !== 'admin') { ... }`.
